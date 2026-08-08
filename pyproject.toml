@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "simple-agent-tool"
+version = "0.1.0"
+description = "简单的Agent工具：DeepSeek 对话、历史消息管理、知识库向量化检索"
+requires-python = ">=3.12"
+dependencies = [
+    "filelock>=3.32.0",
+    "numpy>=2.5.1",
+    "openai>=2.48.0",
+    "python-docx>=1.2.0",
+    "sentence-transformers>=5.6.1",
+]
+
+[tool.setuptools]
+package-dir = { "simple_agent_tool" = "." }
+packages = ["simple_agent_tool"]
