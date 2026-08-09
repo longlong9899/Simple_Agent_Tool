@@ -3,7 +3,7 @@
 简单的 Agent 工具：DeepSeek 对话、历史消息管理、知识库向量化检索。
 
 ## 安装
-pip install git+https://github.com/你的用户名/Simple_Agent_Tool.git
+pip install git+https://github.com/longlong9899/Simple_Agent_Tool.git
 
 ## 快速开始
 ```python
