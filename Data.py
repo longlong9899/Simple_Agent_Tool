@@ -14,8 +14,7 @@ class Data:
                     pass
         except FileExistsError:
             pass
-             
-       
+            
            
     def save(self,data_list:list):
         #print(data_list)
