@@ -129,6 +129,10 @@ class HistoryMessage:
             ret.append(message.to_dict())
         #p#rint(ret)
         return ret
+    def size(self):
+        return len(self.message_list)
+    def clear(self):
+        self.message_list.clear()
 
          
     

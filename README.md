@@ -8,6 +8,7 @@
 - **工具调用**：`Model_With_Tool` + `BaseTool`，支持 OpenAI Function Calling
 - **消息体系**：`HumanMessage` / `SystemMessage` / `AIMMessage` / `AICallMessage` / `ToolMessage`
 - **历史持久化**：按 `user_id` 自动保存对话历史到本地 JSON（带文件锁，进程安全）
+- **上下文压缩**：`ContextManager` 摘要压缩 / 滚动窗口，防止历史无限增长
 - **知识库**：`KnowledgeVector` 文本向量化 + 余弦相似度检索
 - **文件读取**：`ReadFile` 支持 docx / markdown
 
@@ -115,6 +116,38 @@ print(content)
 
 > **注意**：`Model_With_Tool.run()` 只执行**一轮**调用。若模型返回了工具调用，需由调用方循环执行 `call_tool` 后再 `run`，直到模型不再请求工具。
 
+### 4. 上下文压缩（v2 新增）
+
+```python
+from simple_agent_tool import Model, ContextManager
+from pathlib import Path
+
+m = Model(
+    api_key="sk-xxx",
+    base_url="https://api.deepseek.com",
+    model_name="deepseek-chat",
+    model_prompt="你是一个助手",
+    user_id="user1",
+    save_path=Path("./chat_history"),
+)
+
+# 创建压缩器（默认配置）
+cm = ContextManager(m)
+# 可自定义配置
+# cm.config(max_context_token=64000, summary_prompt="自定义摘要提示词...")
+
+# 调用方自行判断是否需要压缩
+if cm.is_context_over():
+    cm.compress()          # 摘要压缩：旧对话 → 摘要，写入 history_summary_prompt
+    # cm.compress_by_delete()   # 或滚动窗口：直接删除旧对话
+```
+
+**压缩原理**：
+- 摘要压缩：将早期对话交给摘要模型提炼为摘要，存入 `history_summary_prompt`，之后每次 `invoke` 会自动拼进系统提示词（`模型提示词 + 摘要`）
+- 滚动窗口：按 `reverse_ratio` 比例直接丢弃早期消息
+- 摘要永远只保留一条，覆盖更新，不会膨胀
+- `compress()` 可重写——继承 `ContextManager` 自定义压缩策略
+
 ## 概览
 
 ### 消息类（`Message.py`）
@@ -136,6 +169,17 @@ print(content)
 | `Model_no_history` | 单轮、可选 JSON 输出 | `str` 或 `dict` （json_output=True 时,返回dict）|
 | `Model_With_Tool` | 工具调用、带历史 | `(content, tool_calls)` 元组 (不支持返回dict) |
 
+### 上下文压缩类（`ContextManager.py`，v2 新增）
+
+| 方法 | 说明 |
+|---|---|
+| `compress()` | 默认摘要压缩（可重写） |
+| `compress_by_summary()` | 早期对话 → 摘要，存入 `history_summary_prompt` |
+| `compress_by_delete()` | 滚动窗口，按 `reverse_ratio` 删除早期消息 |
+| `is_context_over()` | 判断上下文是否超阈值 |
+| `config()` | 自定义阈值 / 摘要提示词 / 摘要模型 |
+| `clear()` | 清空历史 |
+
 ### 工具类（`Tool.py`）
 
 | 类 | 用途 |
@@ -153,29 +197,109 @@ print(content)
 
 ## 知识库（可选）
 
+用于 RAG（检索增强生成）：把文档切块 → 向量化 → 存库，查询时按语义相似度检索最相关的片段。
+
+### 原理
+
+```
+docx 文档 → 大模型语义分块（每段 200~300 字）→ 向量模型编码 → 存入 JSON
+用户提问 → 向量编码 → 余弦相似度检索 → 返回最相似的 top_k 片段
+```
+
+向量模型使用 `BAAI/bge-small-zh-v1.5`（中文优化），**首次使用自动从 HuggingFace 下载，约 100MB**，之后走本地缓存。
+
+### 核心类与函数
+
+| 类/函数 | 说明 |
+|---|---|
+| `TextVector` | 单条文本向量。`TextVector(text)` 编码成向量，`to_dict()` 转字典存储 |
+| `KnowledgeVector` | 知识库容器。加载/保存向量列表，提供构建与检索方法 |
+| `cosine_similarity(a, b)` | 余弦相似度计算，返回 0~1 的相似度分数 |
+
+### 初始化知识库
+
 ```python
-from simple_agent_tool.vector import KnowledgeVector
-from simple_agent_tool import Model
+from simple_agent_tool.vector import KnowledgeVector, TextVector
 from pathlib import Path
 
-# 初始化知识库（首次使用会自动下载向量模型 BAAI/bge-small-zh-v1.5，约 100MB）
+# 知识库数据保存在 kb.json（文件锁保护，进程安全）
 kb = KnowledgeVector(Path("./kb.json"))
 ```
 
-`KnowledgeVector` 支持：
-- `create_by_docx(file, api_key, base_url, model_name)`：用大模型将 docx 按语义分块（200~300 字/段）后向量化入库
-- `search(vector, top_k)`：余弦相似度检索
-- `add(TextVector)`：手动添加向量
+### 方式一：从 docx 构建（自动分块 + 向量化）
+
+```python
+# 传入大模型凭据，内部用大模型把文档按语义切成 200~300 字/段再向量化
+kb.create_by_docx(
+    read_file_path="知识文档.docx",
+    api_key="sk-xxx",
+    base_url="https://api.deepseek.com",
+    model_name="deepseek-chat",
+)
+```
+
+### 方式二：手动添加
+
+```python
+tv = TextVector("这是一段知识文本")
+kb.add(tv)               # 编码并入库（自动保存）
+```
+
+### 检索
+
+```python
+# 把查询语句编码成向量，检索最相似的 top_k 条
+query_vec = TextVector("用户的问题是什么？").vector
+results = kb.search(query_vec, top_k=3)
+
+for r in results:
+    print(r['text'])     # 命中的文本片段
+    print(r['similarity'])  # 相似度分数
+```
+
+### 存储格式
+
+`kb.json` 内容为向量列表：
+
+```json
+[
+  {
+    "vector": [0.0123, -0.0456, ...],   # 768 维浮点数组
+    "text": "第一段知识文本"
+  },
+  {
+    "vector": [0.0234, -0.0789, ...],
+    "text": "第二段知识文本"
+  }
+]
+```
+
+### 注意事项
+
+- `create_by_text` / `create_by_markdown` 目前为预留接口，尚未实现
+- 首次调用 `TextVector` 会下载向量模型（约 100MB）
+- 检索的 `vector` 参数需是 numpy 数组（用 `TextVector(...).vector` 获得）
 
 ## 历史存储
 
-文件内容为标准 JSON，可直接查看。
+对话历史按 `save_path / user_id.json` 保存（v2 格式）：
+
+```json
+{
+  "history_message": [{ "role": "user", "content": "你好" }, ...],
+  "history_summary_prompt": "早期对话摘要（v2 新增）",
+  "version": 2
+}
+```
+
+- `history_summary_prompt` 保存上下文压缩产生的摘要，重启后自动恢复
+- 兼容 v1 旧格式（纯消息列表），加载时自动识别
 
 ## 缺点
 
-- 不支持返回dict格式的模型回复
+- Model_With_Tool 类不支持返回dict格式的模型回复
 - 没有实现异步调用
-- 没有实现上下文压缩，历史消息会无限增长
+- 上下文压缩需调用方手动触发，不会自动执行
 - 不支持自定义模型参数（如 temperature, top_p, max_tokens 等）
 - 因为导入了sentence-transformers去实现知识库，所以包的体积会比较大
 

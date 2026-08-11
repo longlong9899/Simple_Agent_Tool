@@ -8,6 +8,7 @@ class Model:
     model: OpenAI
     history_message: HistoryMessage
     model_prompt:str
+    history_summary_prompt:str
     data:Data
     user_id:str
     type:str
@@ -29,14 +30,16 @@ class Model:
             self.type='text'
         self.user_id=user_id
         self.model_prompt=model_prompt
+        self.history_summary_prompt=''
         #self.history_message.add( )
         self.data=Data(save_path/user_id)
-        self.history_message=HistoryMessage(self.data.load())
+       # self.history_message=HistoryMessage(self.data.load())
+        self.load()
 
     def invoke(self,message:str):
         query=HumanMessage(message)
         self.history_message.add(query)
-        final_message=[SystemMessage(self.model_prompt).to_dict()]+self.history_message.unpack()
+        final_message=[SystemMessage(self.model_prompt+'\n'+self.history_summary_prompt).to_dict()]+self.history_message.unpack()
         if(self.json_output):
             response=self.model.chat.completions.create(
                 model= self.model_name,
@@ -51,10 +54,23 @@ class Model:
                              
                         )
         self.history_message.add(AIMMessage(response.choices[0].message.content))
-        self.data.save(self.history_message.unpack())
+        self.save()
         if(self.json_output):
             return json.loads(response.choices[0].message.content)
         return response.choices[0].message.content
+    def save(self):
+        save_body={'history_message':self.history_message.unpack()
+                   ,'history_summary_prompt':self.history_summary_prompt,
+                   'version':2}
+        self.data.save(save_body)
+    def load(self):
+        load_body=self.data.load()
+        if isinstance(load_body, dict) and 'history_message' in load_body:
+            self.history_message=HistoryMessage(load_body['history_message'])
+            self.history_summary_prompt=load_body.get('history_summary_prompt','')
+        else:
+            self.history_message=HistoryMessage(load_body)
+            self.history_summary_prompt=''
 class Model_no_history:
     model: OpenAI
     model_prompt:str
@@ -100,6 +116,7 @@ class Model_With_Tool:
     model: OpenAI
     history_message: HistoryMessage
     model_prompt:str
+    history_summary_prompt:str
     data:Data
     user_id:str
     model_name:str
@@ -121,15 +138,15 @@ class Model_With_Tool:
             self.tools_map[tool.name]=tool
         self.user_id=user_id
         self.model_prompt=model_prompt
-        
+        self.history_summary_prompt=''
         self.data=Data(save_path/user_id)
-        self.history_message=HistoryMessage(self.data.load())
+        self.load()
 
     def run(self,message:str):
         '''需要解包'''
         query=HumanMessage(message)
         self.history_message.add(query)
-        final_message=[SystemMessage(self.model_prompt).to_dict()]+self.history_message.unpack()
+        final_message=[SystemMessage(self.model_prompt+'\n'+self.history_summary_prompt).to_dict()]+self.history_message.unpack()
          
        
         response=self.model.chat.completions.create(
@@ -147,8 +164,21 @@ class Model_With_Tool:
             self.history_message.add(AICallMessage([tc.model_dump() for tc in response.choices[0].message.tool_calls]))
             for tool_call in response.choices[0].message.tool_calls:
                 tool_calls.append(ToolCall(tool_call.id,tool_call.function.name,json.loads(tool_call.function.arguments)))
-        self.data.save(self.history_message.unpack())
+        self.save()
         return response.choices[0].message.content, tool_calls
+    def save(self):
+        save_body={'history_message':self.history_message.unpack()
+                    ,'history_summary_prompt':self.history_summary_prompt,
+                    'version':2}
+        self.data.save(save_body)
+    def load(self):
+        load_body=self.data.load()
+        if isinstance(load_body, dict) and 'history_message' in load_body:
+            self.history_message=HistoryMessage(load_body['history_message'])
+            self.history_summary_prompt=load_body.get('history_summary_prompt','')
+        else:
+            self.history_message=HistoryMessage(load_body)
+            self.history_summary_prompt=''
     def addTool(self,tool:BaseTool):
         self.tools.append(tool)
         self.tools_map[tool.name]=tool
@@ -161,5 +191,5 @@ class Model_With_Tool:
         except Exception as e:
             ans = f"错误：工具 {tool_call.tool_name} 执行失败 - {e}"
         self.history_message.add(ToolMessage(ans, tool_call.tool_call_id))
-        self.data.save(self.history_message.unpack())
+        self.save()
         return ans
