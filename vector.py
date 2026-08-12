@@ -2,7 +2,7 @@ from sentence_transformers import SentenceTransformer
 import numpy as np
 from numpy.typing import NDArray
 from .Data import Data
-from .Model import Model_no_history
+from .Model import Model_no_history,AsyncModel_no_history
 from .ReadFile import ReadFile
 from pathlib import Path
 
@@ -83,6 +83,37 @@ class KnowledgeVector:
             vector=TextVector(content)
             self.add(vector)
         #print(res)
+    async def async_create_by_docx(self,read_file_path,api_key:str,base_url:str,model_name:str):
+            split_promote='''
+            
+    # 文本语义拆分任务提示词模板
+    
+    ## 任务描述
+    你是专业文本语义分割处理器，负责对输入长文本进行语义分块，用于知识库向量化预处理。
+    
+    ## 强制执行规则
+    1. **分割规则**：依据语义自然切分，禁止在完整句子中间强行截断，保证单块内容语义完整独立。
+    2. **字数约束**：每个文本片段汉字数量控制在 **200～300字**。
+    3. **内容约束**：禁止修改、增删原文文字，只做文本切割。
+    4. **输出格式约束**
+        - 只输出纯净JSON，不要任何开场白、解释文字、注释；
+        - 禁止使用 ```json 代码块包裹结果；
+        - 最外层是一维数组，数组内每一项为字符串。
+    
+    ## 标准输出示例
+    ```json
+    ["第一段分割文本内容","第二段分割文本内容","第三段分割文本内容"]
+    '''
+            #print('调用分段大模型')
+            model=AsyncModel_no_history(api_key, base_url,model_name,split_promote,"split_model",json_output=True)
+            #print('调用完成')
+            rf=ReadFile()
+            rf.read_by_docx(read_file_path)
+            text=rf.text
+            res=await model.invoke(text)  
+            for content in res:
+                vector=TextVector(content)
+                self.add(vector)
     def add(self,vector:TextVector):
         self.knowledge_vector_list.append(vector.to_dict())
         self.data.save(self.knowledge_vector_list)

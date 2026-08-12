@@ -20,4 +20,7 @@ __all__ = [
     'Model_With_Tool',
     'AICallMessage',
     'ContextManager',
+    'AsyncModel_no_history',
+    'AsyncModel_With_Tool',
+    'AsyncModel',
 ]

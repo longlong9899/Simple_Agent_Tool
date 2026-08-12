@@ -213,7 +213,7 @@ class AsyncModel_With_Tool(Model_With_Tool):
         self.history_summary_prompt=''
         self.data=Data(save_path/user_id)
         self.load()
-    
+     
     async def run(self,message:str):
         '''需要解包'''
         query=HumanMessage(message)
@@ -282,4 +282,38 @@ class AsyncModel(Model):
         if(self.json_output):
             return json.loads(response.choices[0].message.content)
         return response.choices[0].message.content
+class AsyncModel_no_history(Model_no_history):
+    def __init__(self, api_key, base_url,model_name:str,model_prompt:str,user_id:str,json_output=False):
+        self.model = AsyncOpenAI(
+            api_key=api_key,
+            base_url= base_url,
+        )
+        self.model_name=model_name
+        self.json_output=json_output
+        if(json_output):
+            self.type='json_object'
+        else:
+            self.type='text'
+        self.user_id=user_id
+        self.model_prompt=model_prompt
+        #self.history_message.add( )
     
+    async def invoke(self,message:str):
+        query=HumanMessage(message)
+        final_message=[SystemMessage(self.model_prompt).to_dict()]+[query.to_dict()]
+        if(self.json_output):
+            response=await self.model.chat.completions.create(
+                model= self.model_name,
+                messages= final_message,
+                response_format={'type':self.type},
+                #strem=
+            )
+        else:
+            response=await self.model.chat.completions.create(
+                            model= self.model_name,
+                            messages= final_message,
+                                
+                        )
+        if(self.json_output):       
+            return json.loads(response.choices[0].message.content)
+        return response.choices[0].message.content

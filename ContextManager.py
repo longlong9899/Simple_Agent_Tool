@@ -1,4 +1,4 @@
-from .Model import Model_no_history,Model
+from .Model import Model_no_history,AsyncModel_no_history,Model
 from .Message import HistoryMessage
 from abc import ABC,abstractmethod
 class ContextManager(ABC):
@@ -70,6 +70,27 @@ class ContextManager(ABC):
         self.model.history_summary_prompt=summary
         self.model.save()
         return summary
+    async def async_compress_by_summary(self)->str:
+            summary_model=AsyncModel_no_history(self.api_key,self.base_url,self.model_name,self.summary_prompt,'summary')
+            temp_list=self.model.history_message.unpack()
+            split_index=self.split_index()
+            up_list=temp_list[0:split_index]
+            down_list=temp_list[split_index:]
+            query='原摘要总结：'+self.model.history_summary_prompt+'\n'+'新上下文：\n'
+            for message in up_list:
+                if message['role']=='assistant' and message['content']==None:
+                    query+=f'{message['role']} {message['tool_calls']}None\n'
+                elif message['role']=='user':
+                    query+=f'{message['role']} {message['content']}\n'
+                elif message['role']=='assistant':
+                    query+=f'{message['role']} {message['content']}\n'
+                elif message['role']=='tool':
+                    query+=f'{message['role']} {message['tool_call_id']} {message['content']}\n'
+            summary=await summary_model.invoke(query)
+            self.model.history_message=HistoryMessage(down_list)
+            self.model.history_summary_prompt=summary
+            self.model.save()
+            return summary
         
     def compress_by_delete(self):
         len=self.model.history_message.size()
