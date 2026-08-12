@@ -4,8 +4,9 @@
 
 ## 特性
 
-- **对话**：`Model`（带历史）、`Model_no_history`（单轮）
-- **工具调用**：`Model_With_Tool` + `BaseTool`，支持 OpenAI Function Calling
+- **对话**：`Model`（带历史）、`Model_no_history`（单轮）、`AsyncModel`（异步）
+- **工具调用**：`Model_With_Tool` + `BaseTool`，支持 OpenAI Function Calling；`AsyncModel_With_Tool`（异步）
+- **异步支持**：`AsyncModel` / `AsyncModel_With_Tool`，底层 `AsyncOpenAI`
 - **消息体系**：`HumanMessage` / `SystemMessage` / `AIMMessage` / `AICallMessage` / `ToolMessage`
 - **历史持久化**：按 `user_id` 自动保存对话历史到本地 JSON（带文件锁，进程安全）
 - **上下文压缩**：`ContextManager` 摘要压缩 / 滚动窗口，防止历史无限增长
@@ -116,6 +117,29 @@ print(content)
 
 > **注意**：`Model_With_Tool.run()` 只执行**一轮**调用。若模型返回了工具调用，需由调用方循环执行 `call_tool` 后再 `run`，直到模型不再请求工具。
 
+### 3.5 异步对话
+
+```python
+import asyncio
+from simple_agent_tool import AsyncModel
+from pathlib import Path
+
+async def main():
+    m = AsyncModel(
+        api_key="sk-xxx",
+        base_url="https://api.deepseek.com",
+        model_name="deepseek-chat",
+        model_prompt="你是一个助手",
+        user_id="user1",
+        save_path=Path("./chat_history"),
+    )
+    print(await m.invoke("你好"))    # 异步调用，需 await
+
+asyncio.run(main())
+```
+
+> 异步类通过继承实现：`AsyncModel(Model)`、`AsyncModel_With_Tool(Model_With_Tool)`，底层使用 `AsyncOpenAI` 客户端，`save/load` 保持同步。适合 FastAPI 等服务端场景。
+
 ### 4. 上下文压缩（v2 新增）
 
 ```python
@@ -168,6 +192,8 @@ if cm.is_context_over():
 | `Model` | 带历史、可选 JSON 输出 | `str` 或 `dict`（json_output=True 时,返回dict） |
 | `Model_no_history` | 单轮、可选 JSON 输出 | `str` 或 `dict` （json_output=True 时,返回dict）|
 | `Model_With_Tool` | 工具调用、带历史 | `(content, tool_calls)` 元组 (不支持返回dict) |
+| `AsyncModel` | 异步版 `Model`（继承），`await invoke()` | `str` 或 `dict` |
+| `AsyncModel_With_Tool` | 异步版 `Model_With_Tool`（继承），`await run()` | `(content, tool_calls)` 元组 |
 
 ### 上下文压缩类（`ContextManager.py`，v2 新增）
 
@@ -298,7 +324,7 @@ for r in results:
 ## 缺点
 
 - Model_With_Tool 类不支持返回dict格式的模型回复
-- 没有实现异步调用
+- 异步类通过复制实现，与同步类存在代码重复（将来可抽公共基类）
 - 上下文压缩需调用方手动触发，不会自动执行
 - 不支持自定义模型参数（如 temperature, top_p, max_tokens 等）
 - 因为导入了sentence-transformers去实现知识库，所以包的体积会比较大

@@ -1,4 +1,4 @@
-from openai import OpenAI
+from openai import OpenAI,AsyncOpenAI
 from .Message import SystemMessage,HumanMessage,BaseMessage,HistoryMessage,AIMMessage,ToolMessage,AICallMessage
 from .Data import Data
 import json
@@ -193,3 +193,93 @@ class Model_With_Tool:
         self.history_message.add(ToolMessage(ans, tool_call.tool_call_id))
         self.save()
         return ans
+class AsyncModel_With_Tool(Model_With_Tool):
+    def __init__(self, api_key, base_url,model_name:str,model_prompt:str,user_id:str,Tools:list,save_path:Path=None):
+        if(save_path is None):
+            raise ValueError("save_path不能为空")
+            
+        self.model = AsyncOpenAI(
+            api_key=api_key,
+            base_url= base_url,
+        )
+        self.tools=list()
+        self.model_name=model_name
+        self.tools=Tools
+        self.tools_map={}
+        for tool in Tools:
+            self.tools_map[tool.name]=tool
+        self.user_id=user_id
+        self.model_prompt=model_prompt
+        self.history_summary_prompt=''
+        self.data=Data(save_path/user_id)
+        self.load()
+    
+    async def run(self,message:str):
+        '''需要解包'''
+        query=HumanMessage(message)
+        self.history_message.add(query)
+        final_message=[SystemMessage(self.model_prompt+'\n'+self.history_summary_prompt).to_dict()]+self.history_message.unpack()
+            
+        
+        response=await self.model.chat.completions.create(
+                        model= self.model_name,
+                        messages= final_message,
+                        tools=[t.to_dict() for t in self.tools]
+                            
+                    )
+        
+        
+        tool_calls=[]
+        if(response.choices[0].message.tool_calls is None):
+            self.history_message.add(AIMMessage(response.choices[0].message.content))
+        else:
+            self.history_message.add(AICallMessage([tc.model_dump() for tc in response.choices[0].message.tool_calls]))
+            for tool_call in response.choices[0].message.tool_calls:
+                tool_calls.append(ToolCall(tool_call.id,tool_call.function.name,json.loads(tool_call.function.arguments)))
+        self.save()
+        return response.choices[0].message.content, tool_calls
+class AsyncModel(Model):
+    def __init__(self, api_key, base_url,model_name:str,model_prompt:str,user_id:str,json_output=False,save_path:Path=None):
+        if(save_path is None):
+            raise ValueError("save_path不能为空")
+            
+        self.model = AsyncOpenAI(
+            api_key=api_key,
+            base_url= base_url,
+        )
+        self.model_name=model_name
+        self.json_output=json_output
+        if(json_output):
+            self.type='json_object'
+        else:
+            self.type='text'
+        self.user_id=user_id
+        self.model_prompt=model_prompt
+        self.history_summary_prompt=''
+        #self.history_message.add( )
+        self.data=Data(save_path/user_id)
+        # self.history_message=HistoryMessage(self.data.load())
+        self.load()
+    async def invoke(self,message:str):
+        query=HumanMessage(message)
+        self.history_message.add(query)
+        final_message=[SystemMessage(self.model_prompt+'\n'+self.history_summary_prompt).to_dict()]+self.history_message.unpack()
+        if(self.json_output):
+            response=await self.model.chat.completions.create(
+                model= self.model_name,
+                messages= final_message,
+                response_format={'type':self.type},
+                #strem=
+            )
+        else:
+            response=await self.model.chat.completions.create(
+                            model= self.model_name,
+                            messages= final_message,
+                                
+                        )
+        self.history_message.add(AIMMessage(response.choices[0].message.content))
+        self.save()
+        if(self.json_output):
+            return json.loads(response.choices[0].message.content)
+        return response.choices[0].message.content
+    
