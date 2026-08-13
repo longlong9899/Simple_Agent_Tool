@@ -1,6 +1,9 @@
 import json
 from filelock import FileLock
 from pathlib import Path
+import logging
+logger=logging.getLogger('Simple_Agent_Tool.Data')
+    
 class Data:
     #file_name:str
     file_path:Path
