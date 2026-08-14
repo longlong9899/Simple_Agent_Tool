@@ -1,6 +1,6 @@
 # Simple_Agent_Tool
 
-简单的 Agent 工具库：基于 DeepSeek 的对话、带历史的消息管理、知识库向量化检索、以及工具（Function Calling）调用能力。
+简单的 Agent 工具库：基于 DeepSeek 的对话、带历史的消息管理、知识库向量化检索、工具（Function Calling）调用能力，以及内置日志系统。
 
 ## 特性
 
@@ -8,10 +8,11 @@
 - **工具调用**：`Model_With_Tool` + `BaseTool`，支持 OpenAI Function Calling；`AsyncModel_With_Tool`（异步）
 - **异步支持**：`AsyncModel` / `AsyncModel_With_Tool`，底层 `AsyncOpenAI`
 - **消息体系**：`HumanMessage` / `SystemMessage` / `AIMMessage` / `AICallMessage` / `ToolMessage`
-- **历史持久化**：按 `user_id` 自动保存对话历史到本地 JSON（带文件锁，进程安全）
+- **历史持久化**：按 `user_id` 自动保存对话历史到本地 JSON（临时文件 + 原子替换 + 文件锁，进程安全）
 - **上下文压缩**：`ContextManager` 摘要压缩 / 滚动窗口，防止历史无限增长
 - **知识库**：`KnowledgeVector` 文本向量化 + 余弦相似度检索
 - **文件读取**：`ReadFile` 支持 docx / markdown
+- **日志系统**：导入包即自动初始化日志，统一格式写入 `logs/` 目录
 
 ## 安装
 
@@ -104,18 +105,17 @@ m = Model_With_Tool(
 
 # 调用：返回 (内容, 工具调用列表)
 content, tool_calls = m.run("北京天气怎么样？")
-print(content, tool_calls)
 
 # 若有工具调用，逐条执行并自动写回 tool 消息到历史
-for tc in tool_calls:            # tc 是 ToolCall 对象
-    m.call_tool(tc)
-
-# 工具执行结果已写入历史，再次调用即可让模型基于结果回答
-content, tool_calls = m.run("天气怎么样？")
+while tool_calls:
+    for tc in tool_calls:            # tc 是 ToolCall 对象
+        m.call_tool(tc)
+    # 不传 message（None）即让模型基于工具结果继续回答，不会重复追加用户问题
+    content, tool_calls = m.run()
 print(content)
 ```
 
-> **注意**：`Model_With_Tool.run()` 只执行**一轮**调用。若模型返回了工具调用，需由调用方循环执行 `call_tool` 后再 `run`，直到模型不再请求工具。
+> **注意**：`Model_With_Tool.run()` 只执行**一轮**调用。若模型返回了工具调用，需由调用方循环执行 `call_tool` 后再 `run()`；`run(message=None)` 不会追加新消息，用于让模型基于工具结果继续作答。
 
 ### 3.5 异步对话
 
@@ -140,7 +140,7 @@ asyncio.run(main())
 
 > 异步类通过继承实现：`AsyncModel(Model)`、`AsyncModel_With_Tool(Model_With_Tool)`，底层使用 `AsyncOpenAI` 客户端，`save/load` 保持同步。适合 FastAPI 等服务端场景。
 
-### 4. 上下文压缩（v2 新增）
+### 4. 上下文压缩
 
 ```python
 from simple_agent_tool import Model, ContextManager
@@ -155,7 +155,7 @@ m = Model(
     save_path=Path("./chat_history"),
 )
 
-# 创建压缩器（默认配置）
+# 创建压缩器（默认配置：max_context_token=85000）
 cm = ContextManager(m)
 # 可自定义配置
 # cm.config(max_context_token=64000, summary_prompt="自定义摘要提示词...")
@@ -171,6 +171,21 @@ if cm.is_context_over():
 - 滚动窗口：按 `reverse_ratio` 比例直接丢弃早期消息
 - 摘要永远只保留一条，覆盖更新，不会膨胀
 - `compress()` 可重写——继承 `ContextManager` 自定义压缩策略
+- 使用摘要压缩前需先通过 `cm.config(api_key=..., base_url=..., model_name=...)` 指定摘要模型
+
+### 5. 日志
+
+导入包时日志系统会自动初始化，默认以 `INFO` 级别写入 `logs/` 目录（每次运行生成一个带时间戳的 `.log` 文件）：
+
+```python
+from simple_agent_tool import run_logger
+from pathlib import Path
+
+# 可选：自定义日志目录 / 级别 / 输出方式（默认 file）
+run_logger(Path("./my_logs"), level=logging.DEBUG, handler_type="console")
+```
+
+日志格式统一为 `时间 | 模块名 | 级别 | 消息`，按模块划分 logger（`Simple_Agent_Tool.Data` / `.Message` / `.Model` / `.ContextManager` / `.Tool` / `.ReadFile` / `.vector`）。高频路径（如消息解包）使用 `DEBUG` 级别，默认不输出。
 
 ## 概览
 
@@ -183,19 +198,19 @@ if cm.is_context_over():
 | `AIMMessage` | `assistant` | 模型回复 |
 | `AICallMessage` | `assistant` | 模型发起的工具调用（含 tool_calls） |
 | `ToolMessage` | `tool` | 工具执行结果 |
-| `HistoryMessage` | - | 历史消息管理（add / unpack，自动持久化兼容） |
+| `HistoryMessage` | - | 历史消息管理（add / unpack / clear，加载兼容 system/user/assistant/tool 全角色） |
 
 ### 模型类（`Model.py`）
 
 | 类 | 特性 | 返回 |
 |---|---|---|
-| `Model` | 带历史、可选 JSON 输出 | `str` 或 `dict`（json_output=True 时,返回dict） |
-| `Model_no_history` | 单轮、可选 JSON 输出 | `str` 或 `dict` （json_output=True 时,返回dict）|
-| `Model_With_Tool` | 工具调用、带历史 | `(content, tool_calls)` 元组 (不支持返回dict) |
+| `Model` | 带历史、可选 JSON 输出 | `str` 或 `dict`（json_output=True 时返回 dict，同样写入历史） |
+| `Model_no_history` | 单轮、可选 JSON 输出 | `str` 或 `dict`（json_output=True 时返回 dict） |
+| `Model_With_Tool` | 工具调用、带历史、`run(message=None)` 续跑 | `(content, tool_calls)` 元组（不支持返回 dict） |
 | `AsyncModel` | 异步版 `Model`（继承），`await invoke()` | `str` 或 `dict` |
 | `AsyncModel_With_Tool` | 异步版 `Model_With_Tool`（继承），`await run()` | `(content, tool_calls)` 元组 |
 
-### 上下文压缩类（`ContextManager.py`，v2 新增）
+### 上下文压缩类（`ContextManager.py`）
 
 | 方法 | 说明 |
 |---|---|
@@ -217,7 +232,7 @@ if cm.is_context_over():
 
 | 类 | 文件 | 用途 |
 |---|---|---|
-| `Data` | `Data.py` | JSON 持久化 |
+| `Data` | `Data.py` | JSON 持久化（临时文件 + 原子替换 + 文件锁） |
 | `ReadFile` | `ReadFile.py` | 读取 docx / markdown 文本 |
 | `TextVector` / `KnowledgeVector` / `cosine_similarity` | `vector.py` | 文本向量化与知识库检索 |
 
@@ -285,19 +300,22 @@ for r in results:
 
 ### 存储格式
 
-`kb.json` 内容为向量列表：
+`kb.json` 内容为向量列表（v2 格式）：
 
 ```json
-[
-  {
-    "vector": [0.0123, -0.0456, ...],   # 768 维浮点数组
-    "text": "第一段知识文本"
-  },
-  {
-    "vector": [0.0234, -0.0789, ...],
-    "text": "第二段知识文本"
-  }
-]
+{
+  "version": "v2",
+  "knowledge_vector_list": [
+    {
+      "vector": [0.0123, -0.0456, ...],
+      "text": "第一段知识文本"
+    },
+    {
+      "vector": [0.0234, -0.0789, ...],
+      "text": "第二段知识文本"
+    }
+  ]
+}
 ```
 
 ### 注意事项
@@ -313,21 +331,29 @@ for r in results:
 ```json
 {
   "history_message": [{ "role": "user", "content": "你好" }, ...],
-  "history_summary_prompt": "早期对话摘要（v2 新增）",
+  "history_summary_prompt": "早期对话摘要",
   "version": 2
 }
 ```
 
 - `history_summary_prompt` 保存上下文压缩产生的摘要，重启后自动恢复
 - 兼容 v1 旧格式（纯消息列表），加载时自动识别
+- 首次创建模型时若历史文件不存在，会自动初始化为空历史，无需手动建文件
+
+## 日志
+
+- 日志目录：默认包目录下的 `logs/`，也可通过 `run_logger(file_path, level, handler_type)` 自定义
+- `handler_type`：`file`（默认，写入文件）或 `console`（输出到控制台）
+- 每次运行生成独立文件：`Simple_Agent_Tool_YYYYMMDD_HHMMSS.log`
+- 每个模块使用独立 logger，便于按模块过滤
 
 ## 缺点
 
-- Model_With_Tool 类不支持返回dict格式的模型回复
+- `Model_With_Tool` 类不支持返回 dict 格式的模型回复
 - 异步类通过复制实现，与同步类存在代码重复（将来可抽公共基类）
 - 上下文压缩需调用方手动触发，不会自动执行
 - 不支持自定义模型参数（如 temperature, top_p, max_tokens 等）
-- 因为导入了sentence-transformers去实现知识库，所以包的体积会比较大
+- 因为导入了 sentence-transformers 去实现知识库，所以包的体积会比较大
 
 ## License
 
