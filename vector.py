@@ -5,16 +5,17 @@ from .Data import Data
 from .Model import Model_no_history,AsyncModel_no_history
 from .ReadFile import ReadFile
 from pathlib import Path
-
+import logging
 '''
     np.dot(a, b)          # 点乘
     np.linalg.norm(a)     # a 的模长
     np.linalg.norm(b)     # b 的模长
 '''
+logger = logging.getLogger('Simple_Agent_Tool.vector')
 def cosine_similarity(a: NDArray, b: NDArray) -> float:
     norm_a = np.linalg.norm(a)
     norm_b = np.linalg.norm(b)
-    
+    logger.debug(f'计算余弦相似度，a模长：{norm_a}，b模长：{norm_b}')
     if norm_a == 0 or norm_b == 0:
         return 0.0
     return np.dot(a, b) / (norm_a * norm_b)
@@ -24,9 +25,15 @@ class TextVector:
     text:str
     _model=None
     def __init__(self,text:str):
-        if TextVector._model is None:
-            TextVector._model = SentenceTransformer("BAAI/bge-small-zh-v1.5")
-        self.vector=TextVector._model.encode(text)
+        logger.debug(f'初始化文本向量，文本：{text[:10]}...')
+        try:
+            if TextVector._model is None:
+                TextVector._model = SentenceTransformer("BAAI/bge-small-zh-v1.5")
+            self.vector=TextVector._model.encode(text)
+            logger.info(f'文本向量初始化完成，向量维度：{self.vector.shape}')
+        except Exception as e:
+            logger.error(f'初始化文本向量失败，错误信息：{e}')
+            raise
         self.text=text
     def to_dict(self):
         return {
@@ -40,11 +47,13 @@ class KnowledgeVector:
     #data_file_name:str=None
     data_file_path:Path
     def __init__(self,data_file_path:Path):
+        logger.info(f'初始化知识库，文件路径：{data_file_path}')
         self.knowledge_vector_list=[]
         self.data_file_path= data_file_path
         #self.data_file_path=data_file_name+'.json'
         self.data=Data(self.data_file_path)
-        self.knowledge_vector_list=self.data.load()
+        logger.info(f'知识库数据加载完成，文件路径：{self.data_file_path}')
+        self.load()
         #print('初始化知识库')
     def create_by_text(self):
         pass
@@ -71,14 +80,25 @@ class KnowledgeVector:
 ```json
 ["第一段分割文本内容","第二段分割文本内容","第三段分割文本内容"]
 '''
-        #print('调用分段大模型')
-        model=Model_no_history(api_key, base_url,model_name,split_promote,"split_model",json_output=True)
+        logger.info(f'初始化分段大模型，文件路径：{read_file_path}')
+        try:
+            model=Model_no_history(api_key, base_url,model_name,split_promote,"split_model",json_output=True)
+            logger.info(f'分段大模型初始化完成，文件路径：{read_file_path}')
+        except Exception as e:
+            logger.error(f'初始化分段大模型失败，错误信息：{e}')
+            raise
         #print('调用完成')
         rf=ReadFile()
+
         rf.read_by_docx(read_file_path)
         text=rf.text
-        res=model.invoke(text)
-         
+        try:
+            res=model.invoke(text)
+            logger.info(f'调用分段大模型成功，文件路径：{read_file_path}')
+        except Exception as e:
+            logger.error(f'调用分段大模型失败，错误信息：{e}')
+            raise
+        logger.info(f'写入知识库，文件路径：{read_file_path}')
         for content in res:
             vector=TextVector(content)
             self.add(vector)
@@ -104,21 +124,32 @@ class KnowledgeVector:
     ```json
     ["第一段分割文本内容","第二段分割文本内容","第三段分割文本内容"]
     '''
-            #print('调用分段大模型')
-            model=AsyncModel_no_history(api_key, base_url,model_name,split_promote,"split_model",json_output=True)
+            logger.info(f'初始化分段大模型，文件路径：{read_file_path}')
+            try:
+                model=AsyncModel_no_history(api_key, base_url,model_name,split_promote,"split_model",json_output=True)
+                logger.info(f'分段大模型初始化完成，文件路径：{read_file_path}')
+            except Exception as e:
+                logger.error(f'初始化分段大模型失败，错误信息：{e}')
+                raise
             #print('调用完成')
             rf=ReadFile()
             rf.read_by_docx(read_file_path)
             text=rf.text
-            res=await model.invoke(text)  
+            try:
+                res=await model.invoke(text)  
+                logger.info(f'调用分段大模型成功，文件路径：{read_file_path}')
+            except Exception as e:
+                logger.error(f'调用分段大模型失败，错误信息：{e}')
+                raise
             for content in res:
                 vector=TextVector(content)
                 self.add(vector)
     def add(self,vector:TextVector):
         self.knowledge_vector_list.append(vector.to_dict())
-        self.data.save(self.knowledge_vector_list)
+        self.save()
     def search(self,vector:NDArray,top_k:int=1):
         similarities=[]
+        logger.info(f'搜索知识库，文件路径：{self.data.file_path}')
         #error:vector is not a numpy array
         for v in self.knowledge_vector_list:
             similarities.append({'TextVector':v,'similarity':cosine_similarity(vector,np.array(v['vector']))})
@@ -127,6 +158,21 @@ class KnowledgeVector:
         for ret in similarities[:top_k]:
             ret_list.append(ret['TextVector'])
         return ret_list
+    def save(self):
+        #logger.info(f'保存知识库，文件路径：{self.data.file_path}')
+        save_data={'knowledge_vector_list':self.knowledge_vector_list,'version':'v2'}
+        self.data.save(save_data)
+    def load(self):
+        logger.info(f'加载知识库，文件路径：{self.data.file_path}')
+        load_data=self.data.load()
+        if isinstance(load_data,dict) and load_data.get('version')=='v2':
+            self.knowledge_vector_list=load_data.get('knowledge_vector_list',[])
+        elif isinstance(load_data,list):
+            self.knowledge_vector_list=load_data
+        else:
+            self.knowledge_vector_list=[]
+
+
 
 if __name__ == '__main__':
     # temp=KnowledgeVector('知识库测试.1')

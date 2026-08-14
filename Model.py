@@ -75,14 +75,16 @@ class Model:
         
         if(self.json_output):
             try:
-                return json.loads(response.choices[0].message.content)
+                parsed=json.loads(response.choices[0].message.content)
             except json.JSONDecodeError:
                 logger.error(f"模型{self.model_name}调用失败：{str(response.choices[0].message.content)[:10]}不是JSON格式")
                 raise ValueError(f"模型{self.model_name}调用失败：{str(response.choices[0].message.content)[:10]}不是JSON格式")
+        else:
+            parsed=response.choices[0].message.content
         self.history_message.add(AIMMessage(response.choices[0].message.content))
         self.save()      
         logger.info(f"模型{self.model_name}运行成功")
-        return response.choices[0].message.content
+        return parsed
     def save(self):
         
         save_body={'history_message':self.history_message.unpack()
@@ -104,8 +106,11 @@ class Model:
         if isinstance(load_body, dict) and 'history_message' in load_body:
             self.history_message=HistoryMessage(load_body['history_message'])
             self.history_summary_prompt=load_body.get('history_summary_prompt','')
-        else:
+        elif isinstance(load_body, list):
             self.history_message=HistoryMessage(load_body)
+            self.history_summary_prompt=''
+        else:
+            self.history_message=HistoryMessage()
             self.history_summary_prompt=''
 class Model_no_history:
     model: OpenAI
@@ -166,8 +171,6 @@ class Model_no_history:
             except json.JSONDecodeError:
                 logger.error(f"模型{self.model_name}调用失败：{str(response.choices[0].message.content)[:10]}不是JSON格式")
                 raise ValueError(f"模型{self.model_name}调用失败：{str(response.choices[0].message.content)[:10]}不是JSON格式")
-        self.history_message.add(AIMMessage(response.choices[0].message.content))
-        self.save()      
         return response.choices[0].message.content
 class Model_With_Tool:
     model: OpenAI
@@ -206,10 +209,11 @@ class Model_With_Tool:
 
         self.load()
         logger.info(f"模型{model_name}初始化完成")
-    def run(self,message:str):
+    def run(self,message:str|None=None):
         '''需要解包'''
-        query=HumanMessage(message)
-        self.history_message.add(query)
+        if(message is not None):
+            query=HumanMessage(message)
+            self.history_message.add(query)
         final_message=[SystemMessage(self.model_prompt+'\n'+self.history_summary_prompt).to_dict()]+self.history_message.unpack()
          
         logger.info(f'调用模型{self.model_name}')
@@ -260,8 +264,11 @@ class Model_With_Tool:
         if isinstance(load_body, dict) and 'history_message' in load_body:
             self.history_message=HistoryMessage(load_body['history_message'])
             self.history_summary_prompt=load_body.get('history_summary_prompt','')
-        else:
+        elif isinstance(load_body, list):
             self.history_message=HistoryMessage(load_body)
+            self.history_summary_prompt=''
+        else:
+            self.history_message=HistoryMessage()
             self.history_summary_prompt=''
     def addTool(self,tool:BaseTool):
         self.tools.append(tool)
@@ -306,10 +313,11 @@ class AsyncModel_With_Tool(Model_With_Tool):
         self.data=Data(save_path/user_id)
         self.load()
      
-    async def run(self,message:str):
+    async def run(self,message:str|None=None):
         '''需要解包'''
-        query=HumanMessage(message)
-        self.history_message.add(query)
+        if(message is not None):
+            query=HumanMessage(message)
+            self.history_message.add(query)
         final_message=[SystemMessage(self.model_prompt+'\n'+self.history_summary_prompt).to_dict()]+self.history_message.unpack()
             
         try:
@@ -385,18 +393,21 @@ class AsyncModel(Model):
                 logger.info(f"异步模型{self.model_name}运行成功")
             except Exception as e:
                 logger.error(f"异步模型{self.model_name}运行失败：{e}")
+                raise
         
         
         if(self.json_output):
             try:
-                return json.loads(response.choices[0].message.content)
+                parsed=json.loads(response.choices[0].message.content)
             except json.JSONDecodeError:
                 logger.error(f"异步模型{self.model_name}运行失败：{str(response.choices[0].message.content)[:10]}不是JSON格式")
                 raise ValueError(f"异步模型{self.model_name}运行失败：{str(response.choices[0].message.content)[:10]}不是JSON格式")
+        else:
+            parsed=response.choices[0].message.content
         self.history_message.add(AIMMessage(response.choices[0].message.content))
         self.save()
         logger.info(f"异步模型{self.model_name}运行成功")
-        return response.choices[0].message.content
+        return parsed
 class AsyncModel_no_history(Model_no_history):
     def __init__(self, api_key, base_url,model_name:str,model_prompt:str,user_id:str,json_output=False):
         try:
