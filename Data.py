@@ -20,7 +20,7 @@ class Data:
                     temp_path=self.file_path.with_suffix('.tmp')
                     with open(temp_path,'w',encoding='utf-8') as f:
                         logger.info(f"开始写入临时文件{temp_path}")
-                        json.dump({'version':'v2','knowledge_vector_list':[]},f,indent=2,ensure_ascii=False)
+                        json.dump({},f,indent=2,ensure_ascii=False)
                         f.flush()
                         os.fsync(f.fileno())
                     os.replace(temp_path,self.file_path)
@@ -63,7 +63,8 @@ class Data:
                     logger.info(f"数据文件{self.file_path}读取完成")
                     return json.loads(text)
         except Exception as e:
-            logger.error(f"数据文件{self.file_path}无法读取：{e}")
-            raise
+           # print("文件读取失败")
+             logger.error(f"数据文件{self.file_path}无法读取")
+             raise 
              
     
